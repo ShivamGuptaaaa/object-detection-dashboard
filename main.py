@@ -65,7 +65,7 @@ if run:
         stframe.image(frame, channels="BGR")
 
     cap.release()
-    cv2.destroyAllWindows()
+    # cv2.destroyAllWindows()
 
 # Load data
 if os.path.exists(filename):
