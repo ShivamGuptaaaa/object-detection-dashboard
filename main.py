@@ -18,7 +18,7 @@ user_name = st.text_input("Enter your name:", "shivam")
 filename = f"{user_name.lower().replace(' ', '_')}_detection_log.csv"
 
 # Load YOLOv8 model
-model = YOLO("yolov8n.pt")
+model = YOLO("yolov8n")
 
 # Start camera and capture detections
 start = st.button("Start Camera and Detect")
