@@ -37,7 +37,7 @@ if not os.path.exists(filename):
 
 # Live detection
 if run:
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     stframe = st.empty()
 
     while cap.isOpened():
