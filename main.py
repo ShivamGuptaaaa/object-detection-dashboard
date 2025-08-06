@@ -8,29 +8,29 @@ from collections import defaultdict
 import time
 import threading
 
-# Load the YOLO model
+# Load YOLOv8 model
 model = YOLO("yolov8n.pt")
 
-# Global detection counter
+# Global detection counts
 detection_counts = defaultdict(int)
 lock = threading.Lock()
 
-st.set_page_config(page_title="YOLOv8 Real-Time Object Detection", layout="wide")
-st.title("📸 YOLOv8 Real-Time Object Detection with Streamlit + Webcam")
+# Streamlit page config
+st.set_page_config(page_title="YOLOv8 Real-Time Dashboard", layout="wide")
+st.title("🎯 YOLOv8 Real-Time Object Detection Dashboard")
 
-st.markdown(
-    """
-This app uses [YOLOv8](https://github.com/ultralytics/ultralytics) for real-time object detection via your webcam.
-"""
-)
+st.markdown("""
+This app uses YOLOv8 with Streamlit WebRTC for real-time object detection using your webcam.
+All detected objects will appear with bounding boxes and the dashboard below will display live analytics.
+""")
 
+# Define video processor
 class YOLOVideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.frame_count = 0
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-
         results = model(img, verbose=False)[0]
         boxes = results.boxes
 
@@ -49,8 +49,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-
-# Start webcam stream
+# Start WebRTC stream
 ctx = webrtc_streamer(
     key="object-detection",
     mode=WebRtcMode.SENDRECV,
@@ -59,31 +58,36 @@ ctx = webrtc_streamer(
     async_processing=True,
 )
 
-# Live KPIs and chart
+# Dashboard section
 placeholder = st.empty()
 
-def display_kpi():
+# Function to update KPIs
+
+def update_dashboard():
     while True:
         with lock:
             top_items = sorted(detection_counts.items(), key=lambda x: x[1], reverse=True)
             df = pd.DataFrame(top_items, columns=["Object", "Count"])
 
         with placeholder.container():
-            st.subheader("📊 Detection Summary")
+            st.markdown("---")
+            st.subheader("📊 Real-Time Detection Dashboard")
+
             kpi1, kpi2, kpi3 = st.columns(3)
 
-            total_detections = sum(detection_counts.values())
-            top_object = top_items[0][0] if top_items else "N/A"
+            total = sum(detection_counts.values())
+            most_common = top_items[0][0] if top_items else "N/A"
             top_count = top_items[0][1] if top_items else 0
 
-            kpi1.metric("Total Detections", total_detections)
-            kpi2.metric("Most Detected", top_object)
+            kpi1.metric("Total Detections", total)
+            kpi2.metric("Top Object", most_common)
             kpi3.metric("Top Count", top_count)
 
+            st.markdown("### 📈 Detection Distribution")
             st.bar_chart(df.set_index("Object"))
 
         time.sleep(3)
 
-# Launch KPI updater in background
-thread = threading.Thread(target=display_kpi, daemon=True)
+# Start dashboard update thread
+thread = threading.Thread(target=update_dashboard, daemon=True)
 thread.start()
