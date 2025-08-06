@@ -8,6 +8,9 @@ from ultralytics import YOLO
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
+warnings.filterwarnings("ignore", message="Examining the path of torch.classes raised")
+
 
 # Streamlit page setup
 st.set_page_config(page_title="Live Object Detection", layout="wide")
