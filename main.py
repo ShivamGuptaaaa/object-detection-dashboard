@@ -1,143 +1,89 @@
-# main.py
-
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+from ultralytics import YOLO
+import av
 import cv2
 import pandas as pd
-from datetime import datetime
-import os
-from ultralytics import YOLO
-import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
-import warnings
-warnings.filterwarnings("ignore", message="Examining the path of torch.classes raised")
+from collections import defaultdict
+import time
+import threading
+
+# Load the YOLO model
+model = YOLO("yolov8n.pt")
+
+# Global detection counter
+detection_counts = defaultdict(int)
+lock = threading.Lock()
+
+st.set_page_config(page_title="YOLOv8 Real-Time Object Detection", layout="wide")
+st.title("📸 YOLOv8 Real-Time Object Detection with Streamlit + Webcam")
+
+st.markdown(
+    """
+This app uses [YOLOv8](https://github.com/ultralytics/ultralytics) for real-time object detection via your webcam.
+"""
+)
+
+class YOLOVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.frame_count = 0
+
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+
+        results = model(img, verbose=False)[0]
+        boxes = results.boxes
+
+        with lock:
+            for box in boxes:
+                cls = int(box.cls[0])
+                label = model.names[cls]
+                detection_counts[label] += 1
+
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+                text = f"{label} {conf:.2f}"
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(img, text, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 
-# Streamlit page setup
-st.set_page_config(page_title="Live Object Detection", layout="wide")
-st.title("📸 Live Object Detection and Dashboard")
+# Start webcam stream
+ctx = webrtc_streamer(
+    key="object-detection",
+    mode=WebRtcMode.SENDRECV,
+    video_processor_factory=YOLOVideoProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
 
-# File name for logging
-user_name = st.text_input("Enter your name:", "shivam")
-filename = f"{user_name.lower().replace(' ', '_')}_detection_log.csv"
+# Live KPIs and chart
+placeholder = st.empty()
 
-# Load YOLOv8 model
-model = YOLO("yolov8n")
+def display_kpi():
+    while True:
+        with lock:
+            top_items = sorted(detection_counts.items(), key=lambda x: x[1], reverse=True)
+            df = pd.DataFrame(top_items, columns=["Object", "Count"])
 
-# Start camera and capture detections
-start = st.button("Start Camera and Detect")
-stop = st.button("Stop Detection")
-run = False
+        with placeholder.container():
+            st.subheader("📊 Detection Summary")
+            kpi1, kpi2, kpi3 = st.columns(3)
 
-if start:
-    run = True
+            total_detections = sum(detection_counts.values())
+            top_object = top_items[0][0] if top_items else "N/A"
+            top_count = top_items[0][1] if top_items else 0
 
-if stop:
-    run = False
+            kpi1.metric("Total Detections", total_detections)
+            kpi2.metric("Most Detected", top_object)
+            kpi3.metric("Top Count", top_count)
 
-# Create/append CSV
-if not os.path.exists(filename):
-    pd.DataFrame(columns=["Timestamp", "Object", "Confidence"]).to_csv(filename, index=False)
+            st.bar_chart(df.set_index("Object"))
 
-# Live detection
-if run:
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    stframe = st.empty()
+        time.sleep(3)
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        results = model(frame, stream=True)
-
-        for r in results:
-            for box in r.boxes:
-                cls = model.names[int(box.cls[0])]
-                conf = round(float(box.conf[0]), 2)
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                # Save to CSV
-                new_data = pd.DataFrame([[timestamp, cls, conf]], columns=["Timestamp", "Object", "Confidence"])
-                new_data.to_csv(filename, mode='a', header=False, index=False)
-
-                # Draw box
-                xyxy = box.xyxy[0].cpu().numpy().astype(int)
-                cv2.rectangle(frame, (xyxy[0], xyxy[1]), (xyxy[2], xyxy[3]), (0, 255, 0), 2)
-                cv2.putText(frame, f'{cls} {conf}', (xyxy[0], xyxy[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
-        stframe.image(frame, channels="BGR")
-
-    cap.release()
-    # cv2.destroyAllWindows()
-
-# Load data
-if os.path.exists(filename):
-    df = pd.read_csv(filename)
-    if not df.empty:
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-        df['Hour'] = df['Timestamp'].dt.hour
-
-        st.subheader("📦 Object Detection Count")
-        object_count = df["Object"].value_counts().reset_index()
-        object_count.columns = ["Object", "Count"]
-
-        fig1, ax1 = plt.subplots(figsize=(3, 2))
-        sns.barplot(data=object_count, x="Object", y="Count", palette="viridis", ax=ax1)
-        ax1.set_title("Detected Objects", fontsize=10)
-        ax1.set_xlabel("Object", fontsize=8)
-        ax1.set_ylabel("Count", fontsize=8)
-        ax1.tick_params(axis='x', rotation=45)
-        st.pyplot(fig1)
-
-        st.subheader("🥧 Object Detection Distribution")
-        fig2, ax2 = plt.subplots(figsize=(3, 2))
-        colors = plt.cm.Pastel1.colors
-        explode = [0.05] * len(object_count)
-
-        ax2.pie(
-            object_count["Count"],
-            labels=object_count["Object"],
-            autopct="%1.1f%%",
-            startangle=140,
-            colors=colors,
-            explode=explode,
-            wedgeprops={"edgecolor": "black"},
-            textprops={'fontsize': 10}
-        )
-        ax2.set_title("Object Share", fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig2)
-
-        st.subheader("🕒 Object Detection by Hour (Heatmap)")
-        heat_data = df.groupby(['Hour', 'Object']).size().unstack(fill_value=0)
-
-        fig3, ax3 = plt.subplots(figsize=(3, 2))
-        sns.heatmap(heat_data, cmap='coolwarm', annot=True, fmt='d', linewidths=.5, ax=ax3)
-        ax3.set_title("📊 Frequency of Objects by Hour", fontsize=10)
-        ax3.set_xlabel("Object", fontsize=8)
-        ax3.set_ylabel("Hour of Day", fontsize=8)
-        st.pyplot(fig3)
-
-        # ----------------------------
-        # 📋 Final Summary Section
-        # ----------------------------
-        st.markdown("---")
-        st.header("📋 Summary Report")
-        
-        most_detected = object_count.iloc[0]["Object"] if not object_count.empty else "N/A"
-        peak_hour = df['Hour'].mode()[0] if not df.empty else "N/A"
-        total_detections = len(df)
-        unique_objects = df["Object"].nunique()
-        
-        summary_text = f"""
-        - ✅ A total of **{total_detections} detections** were recorded.
-        - 🔢 **{unique_objects} unique objects** were identified during this session.
-        - 🥇 The most detected object is **'{most_detected}'**.
-        - ⏰ The peak detection time was around **{peak_hour}:00 hrs**.
-        - 📁 Data source file: `{os.path.basename(latest_file) if 'latest_file' in locals() else 'Uploaded File'}`
-        """
-        
-        st.markdown(summary_text)
-        st.success("📊 Dashboard generation complete — Great job, Detective! 🕵️")
-        st.info("✨ Scroll up to explore the complete insights.")
-
+# Launch KPI updater in background
+thread = threading.Thread(target=display_kpi, daemon=True)
+thread.start()
